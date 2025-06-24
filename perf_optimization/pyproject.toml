@@ -14,10 +14,20 @@ dependencies = [
     "pandas (>=2.3.0,<3.0.0)",
     "scikit-learn (>=1.7.0,<2.0.0)",
     "fastapi (>=0.115.12,<0.116.0)",
-    "faiss (>=1.5.3,<2.0.0)"
+    "hnswlib (>=0.8.0,<0.9.0)",
+    "uvicorn (>=0.34.3,<0.35.0)",
+    "pyarrow (>=20.0.0,<21.0.0)",
+    "fastparquet (>=2024.11.0,<2025.0.0)",
 ]
+package-mode = false
 
+[tool.poetry]
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.2.0"
+

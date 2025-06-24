@@ -1,16 +1,19 @@
 # optimized_service_v1.py
-import time
 import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+
 import numpy as np
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity
+import uvicorn
 from fastapi import FastAPI
-from contextlib import asynccontextmanager
-from concurrent.futures import ThreadPoolExecutor
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Global optimized data structures
 optimized_data = {}
 thread_pool = ThreadPoolExecutor(max_workers=4)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -18,37 +21,40 @@ async def lifespan(app: FastAPI):
     print("Building optimized data structures...")
 
     # Load raw data
-    products_df = pd.read_parquet('data/products.parquet')
+    products_df = pd.read_parquet("data/products.parquet")
 
     # Pre-build optimized structures
     optimized_data = {
-        'embeddings_matrix': np.array(products_df['embedding'].tolist()),
-        'product_lookup': {
+        "embeddings_matrix": np.array(products_df["embedding"].tolist()),
+        "product_lookup": {
             i: {
-                'product_id': row['product_id'],
-                'name': row['name'],
-                'category': row['category'],
-                'price': row['price']
+                "product_id": row["product_id"],
+                "name": row["name"],
+                "category": row["category"],
+                "price": row["price"],
             }
             for i, row in products_df.iterrows()
         },
-        'category_index': build_category_index(products_df)
+        "category_index": build_category_index(products_df),
     }
 
     print(f"Optimized structures built for {len(products_df)} products")
     yield
 
+
 def build_category_index(products_df):
     """Pre-build category lookup to avoid O(n) DataFrame operations"""
     category_index = {}
     for idx, row in products_df.iterrows():
-        category = row['category']
+        category = row["category"]
         if category not in category_index:
             category_index[category] = []
         category_index[category].append(idx)
     return category_index
 
+
 app = FastAPI(lifespan=lifespan)
+
 
 class OptimizedRecommendationServiceV1:
     """First optimization: pre-computation and async handling"""
@@ -56,6 +62,7 @@ class OptimizedRecommendationServiceV1:
     @staticmethod
     async def generate_query_embedding_async(query: str) -> np.ndarray:
         """Move embedding generation to thread pool"""
+
         def _generate_embedding():
             time.sleep(0.1)  # Simulate API call
             np.random.seed(hash(query) % 2**32)
@@ -73,7 +80,9 @@ class OptimizedRecommendationServiceV1:
 
         # Step 1: Generate embedding asynchronously
         step1_start = time.perf_counter()
-        query_embedding = await OptimizedRecommendationServiceV1.generate_query_embedding_async(query)
+        query_embedding = (
+            await OptimizedRecommendationServiceV1.generate_query_embedding_async(query)
+        )
         step1_time = time.perf_counter() - step1_start
 
         # Step 2: Use pre-computed embeddings matrix (major improvement!)
@@ -83,17 +92,16 @@ class OptimizedRecommendationServiceV1:
         # 2. No memory allocations or copies needed
         # 3. Direct memory access to contiguous array
         # 4. CPU can use vectorized operations efficiently
-        embeddings_matrix = optimized_data['embeddings_matrix']  # Already built!
+        embeddings_matrix = optimized_data["embeddings_matrix"]  # Already built!
         step2_time = time.perf_counter() - step2_start
 
         # Step 3: Compute similarity (still expensive but unavoidable with exact search)
         step3_start = time.perf_counter()
 
         def _compute_similarity():
-            return cosine_similarity(
-                query_embedding.reshape(1, -1),
-                embeddings_matrix
-            )[0]
+            return cosine_similarity(query_embedding.reshape(1, -1), embeddings_matrix)[
+                0
+            ]
 
         # Why use thread pool here:
         # 1. This is pure CPU work that can't be pre-computed (depends on query)
@@ -114,20 +122,17 @@ class OptimizedRecommendationServiceV1:
         # 3. Data already in optimal format (no conversion needed)
         # 4. Better memory locality for small lookups
         results = []
-        product_lookup = optimized_data['product_lookup']
+        product_lookup = optimized_data["product_lookup"]
 
         for idx in top_indices:
             product = product_lookup[idx]  # O(1) lookup instead of DataFrame access
-            if product['price'] > 20:
-                results.append({
-                    **product,
-                    'similarity': float(similarities[idx])
-                })
+            if product["price"] > 20:
+                results.append({**product, "similarity": float(similarities[idx])})
 
         step4_time = time.perf_counter() - step4_start
         total_time = time.perf_counter() - start_time
 
-        print(f"Optimized V1 breakdown:")
+        print("Optimized V1 breakdown:")
         print(f"  Step 1 (Embedding):     {step1_time:.3f}s")
         print(f"  Step 2 (Matrix access): {step2_time:.3f}s")  # Should be ~0.000s
         print(f"  Step 3 (Similarity):    {step3_time:.3f}s")  # Still expensive
@@ -136,12 +141,15 @@ class OptimizedRecommendationServiceV1:
 
         return results
 
+
 @app.get("/recommendations/optimized-v1")
 async def get_optimized_recommendations_v1(query: str = "electronics"):
     """First optimization: pre-computation and proper async"""
     start_time = time.perf_counter()
 
-    results = await OptimizedRecommendationServiceV1.optimized_similarity_search_v1(query)
+    results = await OptimizedRecommendationServiceV1.optimized_similarity_search_v1(
+        query
+    )
 
     total_time = time.perf_counter() - start_time
 
@@ -151,62 +159,10 @@ async def get_optimized_recommendations_v1(query: str = "electronics"):
             "query": query,
             "total_time": f"{total_time:.3f}s",
             "num_results": len(results),
-            "optimization": "v1"
-        }
+            "optimization": "v1",
+        },
     }
 
 
 if __name__ == "__main__":
-    import uvicorn
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8003)
-
-
-
-# Benchmarking 127.0.0.1 (be patient).....done
-#
-#
-# Server Software:        uvicorn
-# Server Hostname:        127.0.0.1
-# Server Port:            8000
-#
-# Document Path:          /recommendations/optimized-v1?query=electronics
-# Document Length:        1431 bytes
-#
-# Concurrency Level:      5
-# Time taken for tests:   4.790 seconds
-# Complete requests:      10
-# Failed requests:        0
-# Total transferred:      15580 bytes
-# HTML transferred:       14310 bytes
-# Requests per second:    2.09 [#/sec] (mean)
-#     Time per request:       2395.129 [ms] (mean)
-# Time per request:       479.026 [ms] (mean, across all concurrent requests)
-# Transfer rate:          3.18 [Kbytes/sec] received
-#
-# Connection Times (ms)
-# min  mean[+/-sd] median   max
-# Connect:        0    0   0.2      0       1
-# Processing:   637 1984 1165.5   2862    3522
-# Waiting:      636 1983 1165.3   2862    3522
-# Total:        637 1984 1165.6   2862    3522
-#
-# Percentage of the requests served within a certain time (ms)
-# 50%   2862
-# 66%   2991
-# 75%   2991
-# 80%   2991
-# 90%   3522
-# 95%   3522
-# 98%   3522
-# 99%   3522
-# 100%   3522 (longest request)
-#
-#
-# INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-# Optimized V1 breakdown:
-# Step 1 (Embedding):     0.109s
-# Step 2 (Matrix access): 0.000s
-# Step 3 (Similarity):    0.484s
-# Step 4 (Processing):    0.042s
-# Total time:             0.634s
+    uvicorn.run(app, host="0.0.0.0", port=8002)
